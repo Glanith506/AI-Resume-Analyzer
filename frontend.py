@@ -152,42 +152,120 @@ div.stButton > button[kind="primary"]:hover {
 """,
     unsafe_allow_html=True
 )
+st.markdown(
+    """
+    <style>
+    /* Sidebar background */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(
+            180deg,
+            #102b50 0%,
+            #09182e 100%
+        );
+        border-right: 1px solid #244365;
+    }
 
+    /* Sidebar spacing */
+    [data-testid="stSidebarUserContent"] {
+        padding: 2rem 1.5rem;
+    }
+
+    /* Brand */
+    [data-testid="stSidebar"] h1 {
+        color: #ffffff;
+        font-size: 1.7rem;
+        font-weight: 800;
+        letter-spacing: -0.5px;
+    }
+
+    /* Section headings */
+    [data-testid="stSidebar"] h3 {
+        color: #93c5fd;
+        font-size: 1.05rem;
+        font-weight: 700;
+    }
+
+    /* Instructions and checkbox labels */
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] li,
+    [data-testid="stSidebar"] strong,
+    [data-testid="stSidebar"] label {
+        color: #e2e8f0;
+        line-height: 1.7;
+    }
+
+    /* Supporting text */
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+        color: #a9bdd5;
+        font-size: 0.85rem;
+    }
+
+    /* Dividers */
+    [data-testid="stSidebar"] hr {
+        border-color: rgba(148, 180, 215, 0.22);
+        margin: 1.8rem 0;
+    }
+
+    /* Checkbox section */
+    [data-testid="stSidebar"] [data-testid="stCheckbox"] {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(147, 197, 253, 0.18);
+        border-radius: 10px;
+        padding: 10px 12px;
+    }
+
+    /* Links */
+    [data-testid="stSidebar"] a {
+        color: #93c5fd;
+    }
+
+    /* Sidebar collapse control */
+    [data-testid="stSidebar"] button[kind="headerNoPadding"] {
+        color: #e2e8f0;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# Sidebar
 # Sidebar
 with st.sidebar:
     st.title("📄 ResumeLens")
-    st.caption("Your resume. A clearer direction.")
+    st.caption("Resume analysis and skill preparation")
     st.divider()
 
     st.subheader("How it works")
+
     st.markdown(
         """
 **1. Upload your resume**  
-Choose a text-based PDF.
+Choose a PDF with selectable text.
 
 **2. Add a job description**  
-Paste the role you want to explore.
+Compare matching skills and skills to review.
 
-**3. View your results**  
-Compare skills and review suggestions.
+**3. Add learning material**  
+Upload notes or guides to your saved knowledge base.
+
+**4. Ask questions**  
+Get answers using your documents, with source references.
 """
     )
 
     st.divider()
-    st.subheader("Analysis settings")
+    st.subheader("Resume feedback")
 
-    include_ai = st.checkbox("Include AI suggestions", value=False)
-
-    if include_ai:
-        st.caption(
-            "Your extracted resume text and job description "
-            "will be sent to Groq."
-        )
-    else:
-        st.caption("Enable this to receive AI resume feedback.")
+    include_ai = st.checkbox(
+        "Include AI suggestions",
+        value=False
+    )
 
     st.divider()
-    st.caption("Built with Python • Streamlit • Groq")
+    st.caption(
+        "Python • Streamlit • MiniLM • ChromaDB • Groq"
+    )
+    
 
 # Navbar
 st.markdown(
@@ -264,7 +342,7 @@ st.write("")
 analyze = st.button(
     "Analyze my resume →",
     type="primary",
-    use_container_width=True
+    width="stretch"
 )
 
 # Clear old results when inputs or settings change
@@ -472,6 +550,126 @@ elif not analyze:
     st.caption(
         "Ready when you are — upload your resume and add a role above."
     )
+
+# Source-grounded learning workspace
+st.divider()
+st.header("📚 Study materials")
+st.caption("Your learning index is saved locally in ChromaDB and reopened after a restart.")
+from rag import read_document, KnowledgeBase, grounded_answer
+from backend import call_llm
+from pathlib import Path
+import traceback
+
+@st.cache_resource
+def load_encoder():
+    import torch
+    from sentence_transformers import SentenceTransformer
+    torch.set_num_threads(1)
+    return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device="cpu")
+
+@st.cache_resource
+def open_saved_knowledge_base():
+    return KnowledgeBase(encoder_factory=load_encoder)
+
+
+def learning_error(message, error):
+    st.error(f"{message}: {type(error).__name__}: {error}")
+    traceback.print_exc()
+
+
+kb = None
+try:
+    kb = open_saved_knowledge_base()
+except Exception as error:
+    learning_error("Could not open saved ChromaDB index", error)
+    st.info("Keep a backup of data/chroma. Check the terminal and README before changing database versions.")
+
+learning_files = st.file_uploader("	Upload notes (maximum 10 files))",
+                                  type=["pdf", "txt", "md"], accept_multiple_files=True, key="learning_files")
+st.caption("Adding documents keeps existing ones. Identical file contents are skipped, even when renamed. A changed file is a new document; remove the older version if desired.")
+if st.button("Save documents", disabled=not learning_files or kb is None):
+    try:
+        if len(learning_files) > 10:
+            raise ValueError("Upload at most 10 documents at once.")
+        with st.spinner("Creating embeddings and saving document passages to ChromaDB..."):
+            chunks = []
+            for f in learning_files:
+                chunks.extend(read_document(f.name, f.getvalue()))
+            if len(chunks) > 2000:
+                raise ValueError("Use fewer or shorter documents (maximum 2,000 passages).")
+            stats = kb.add_chunks(chunks)
+        st.session_state.pop("learning_answer", None)
+        st.success(f"Knowledge base ready: {stats['added']} new passages saved; {stats['skipped']} already indexed passages skipped.")
+    except Exception as error:
+        learning_error("Could not add documents", error)
+        st.info("Earlier completed batches may be saved. Retrying the same files skips those passages. Native crashes require the terminal log; persistence alone does not fix them.")
+
+if kb is not None:
+    try:
+        docs = kb.documents()
+        st.metric("Saved passages", kb.count())
+        if docs:
+            st.success("Your documents are ready.")
+            st.dataframe([{"Document": d["source"], "File ID": d["document_id"][:12],
+                           "Passages": d["passages"]} for d in docs], hide_index=True, use_container_width=True)
+        else:
+            st.info("No saved learning documents yet. Upload notes above to get started.")
+        with st.expander("Manage documents"):
+            st.caption("This local app uses one personal knowledge base shared by tabs on this computer. These actions affect that saved collection.")
+            if docs:
+                doc_id = st.selectbox("Document to remove", [d['document_id'] for d in docs],
+                                     format_func=lambda value: next(f"{d['source']} ({value[:12]})" for d in docs if d['document_id'] == value))
+                confirm_remove = st.checkbox("Confirm removal of the selected saved document", key="confirm_remove")
+                if st.button("Remove selected document", disabled=not confirm_remove):
+                    kb.delete_document(doc_id)
+                    st.session_state.pop("learning_answer", None)
+                    st.rerun()
+            confirm_clear = st.checkbox("Confirm deletion of ALL saved learning passages", key="confirm_clear")
+            if st.button("Clear saved knowledge base", disabled=not confirm_clear):
+                kb.clear()
+                st.session_state.pop("learning_answer", None)
+                st.rerun()
+    except Exception as error:
+        learning_error("Could not read or manage saved documents", error)
+
+missing = result["missing_skills"] if result else []
+if missing:
+    st.write("Skills not detected in your resume: " + ", ".join(missing))
+    chosen = st.selectbox("Choose a skill to study", missing)
+else:
+    chosen = "a topic in these documents"
+question = st.text_input("Ask a question", placeholder="What is Docker, and what should I practise first?")
+consent = st.checkbox("Send my question, missing-skill names and retrieved passages to Groq", key="rag_consent")
+if st.button("Get answer", type="primary"):
+    if kb is None or kb.count() == 0:
+        st.warning("Add learning documents to the saved knowledge base first.")
+    elif not consent:
+        st.warning("Enable the Groq checkbox to generate an answer.")
+    else:
+        q = question.strip() or f"Explain {chosen} and suggest a beginner practice plan."
+        if len(q) > 2000:
+            st.warning("Keep the question under 2,000 characters.")
+        else:
+            try:
+                with st.spinner("Retrieving saved passages and preparing your answer..."):
+                    hits = kb.search(q)
+                    answer = grounded_answer(q, hits, missing, call_llm)
+                    st.session_state["learning_answer"] = (q, answer, hits)
+            except Exception as error:
+                # Keep API error details out of the page; no credentials or prompts are logged.
+                st.error(f"Learning answer unavailable ({type(error).__name__}). Check your Groq key, model name, quota and connection. Your saved documents remain available.")
+if st.session_state.get("learning_answer"):
+    q, answer, hits = st.session_state["learning_answer"]
+    st.subheader(q)
+    st.markdown(answer)
+    st.caption("AI-generated answer: review it against the retrieved passages below. Citations are model-generated and may need checking.")
+    for i, hit in enumerate(hits, 1):
+        with st.expander(f"[S{i}] {hit['source']} · page {hit['page']} · passage {hit['chunk']}"):
+            st.write(hit["text"])
+            st.caption(f"Retrieval similarity: {hit['similarity']} (not answer confidence)")
+    st.download_button("Download learning answer", q + "\n\n" + answer + "\n\nSOURCES\n" +
+                       "\n\n".join(f"[S{i}] {h['source']} page {h['page']}\n{h['text']}" for i,h in enumerate(hits,1)),
+                       file_name="learning_plan.txt")
 
 # Footer
 st.markdown(

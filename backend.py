@@ -1,25 +1,36 @@
 import re
+import os
 from pathlib import Path
-from dotenv import load_dotenv
-from groq import Groq
 from pypdf import PdfReader
 
-load_dotenv(Path(__file__).parent / ".env")
+def _client():
+    from dotenv import load_dotenv
+    from groq import Groq
+    load_dotenv(Path(__file__).parent / ".env")
+    return Groq(timeout=45.0, max_retries=1)
+
 
 # Recognized skills
 skills = [
     "python", "sql", "java", "javascript", "react",
     "html", "css", "fastapi", "mongodb", "mysql",
-    "git", "machine learning", "nlp", "power bi", "excel"
+    "git", "machine learning", "nlp", "power bi", "excel",
+    "docker", "rag", "langchain", "chromadb", "pinecone", "embeddings",
+    "llm", "prompt engineering", "pytorch", "tensorflow", "postgresql",
+    "node.js", "express", "typescript", "aws", "azure", "streamlit", "groq"
 ]
 
 
 def extract_skills(text):
     text = text.lower()
+    for alias, canonical in {"react.js": "react", "reactjs": "react", "nodejs": "node.js",
+                             "postgres": "postgresql", "large language models": "llm",
+                             "retrieval augmented generation": "rag"}.items():
+        text = re.sub(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", canonical, text)
     found_skills = []
 
     for skill in skills:
-        pattern = r"\b" + re.escape(skill) + r"\b"
+        pattern = r"(?<![\w])" + re.escape(skill) + r"(?![\w])"
         if re.search(pattern, text):
             found_skills.append(skill)
 
@@ -29,10 +40,10 @@ def extract_skills(text):
 def generate_suggestions(
     resume_text, job_description, matching_skills, missing_skills
 ):
-    client = Groq(timeout=30.0, max_retries=0)
+    client = _client()
 
     response = client.chat.completions.create(
-        model="openai/gpt-oss-20b",
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
         messages=[
             {
                 "role": "system",
@@ -102,4 +113,19 @@ def compare_skills(resume_text, job_description):
 
 
 def calculate_match_percentage(matching_skills, job_skills):
-    return (len(matching_skills) / len(job_skills)) * 100
+    return (len(matching_skills) / len(job_skills)) * 100 if job_skills else 0.0
+
+
+def call_llm(system, user):
+    import os
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / '.env')
+    if not os.getenv('GROQ_API_KEY'):
+        raise ValueError('Add GROQ_API_KEY to the project .env file and restart Streamlit.')
+    client = _client()
+    response = client.chat.completions.create(
+        model=os.getenv('GROQ_MODEL', 'openai/gpt-oss-20b'),
+        messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': user}],
+        temperature=0.2, max_tokens=1200,
+    )
+    return response.choices[0].message.content or 'No answer was returned. Please try again.'

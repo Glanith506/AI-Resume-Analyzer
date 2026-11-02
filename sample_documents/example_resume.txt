@@ -1,0 +1,2 @@
+Demo Candidate
+Python developer with SQL and Streamlit project experience. Built a PDF text extraction application using pypdf and integrated an LLM through Groq.
